@@ -1,0 +1,68 @@
+const request = require('supertest');
+const chai = require('chai');
+const expect = chai.expect;
+const app = require('../app'); // Import your express app (make sure app.js exports it)
+
+describe('API Tests', () => {
+    let validToken;
+    let expiredToken;
+
+    // Test /auth endpoint (JWT generation)
+    describe('POST /auth', () => {
+        it('should generate a valid JWT when "expired=false" is passed', async () => {
+            const res = await request(app).post('/auth?expired=false');
+            expect(res.status).to.equal(200);
+            expect(res.body.token).to.be.a('string');
+            validToken = res.body.token; // Save valid token for further tests
+        });
+
+        it('should generate an expired JWT when "expired=true" is passed', async () => {
+            const res = await request(app).post('/auth?expired=true');
+            expect(res.status).to.equal(200);
+            expect(res.body.token).to.be.a('string');
+            expiredToken = res.body.token; // Save expired token for further tests
+        });
+    });
+
+    // Test /well-known/jwks.json endpoint (JWKS fetching)
+    describe('GET /.well-known/jwks.json', () => {
+        it('should return the JWKS containing valid keys', async () => {
+            const res = await request(app).get('/.well-known/jwks.json');
+            expect(res.status).to.equal(200);
+            expect(res.body.keys).to.be.an('array');
+            expect(res.body.keys).to.have.lengthOf.at.least(1); // Ensure there is at least one key
+            // Check if the key is valid
+            const key = res.body.keys[0];
+            expect(key.kty).to.equal('RSA');
+            expect(key.alg).to.equal('RS256');
+            expect(key.use).to.equal('sig');
+        });
+
+        it('should not return expired keys', async () => {
+            // Wait for keys to expire (6 seconds to wait for expiration)
+            await new Promise(resolve => setTimeout(resolve, 6000)); // Wait for 6 seconds to allow key expiration
+            
+            const res = await request(app).get('/.well-known/jwks.json');
+            expect(res.status).to.equal(200);
+            expect(res.body.keys).to.be.an('array');
+            expect(res.body.keys.length).to.equal(0); // After expiration, no keys should be returned
+        });
+    });
+
+    // Test Token Validation (optional, requires your verification logic)
+    describe('JWT Validation', () => {
+        it('should reject expired tokens', async () => {
+            const res = await request(app)
+                .get('/.well-known/jwks.json')
+                .set('Authorization', `Bearer ${expiredToken}`);
+            expect(res.status).to.equal(401); // Unauthorized due to expired token
+        });
+
+        it('should accept valid tokens', async () => {
+            const res = await request(app)
+                .get('/.well-known/jwks.json')
+                .set('Authorization', `Bearer ${validToken}`);
+            expect(res.status).to.equal(200); // Valid token should return a valid response
+        });
+    });
+});
